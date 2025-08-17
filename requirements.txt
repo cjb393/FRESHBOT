@@ -1,20 +1,57 @@
-# requirements.txt
-# System dependency (not pip):
-#   - ImageMagick (CLI `magick`) → install with:
-#       winget install --id ImageMagick.ImageMagick -e --silent
+# requirements.txt — FreshBot (Windows + Python 3.12)
 
-# ---- Discord bot (voice-enabled) ----
+# === Discord bot (git master like your repo) ===
 discord.py[voice] @ git+https://github.com/Rapptz/discord.py@master
 discord-ext-voice-recv==0.5.2a179
 PyNaCl==1.5.0
 
-# ---- Transcription (Whisper via CTranslate2) ----
+# === Whisper (faster-whisper on CPU/GPU via CTranslate2) ===
 faster-whisper==1.2.0
 ctranslate2==4.5.0
+onnxruntime==1.22.1
+av==15.0.0
+
+# === Core utilities ===
+numpy==2.3.2
+python-dotenv==1.1.1
+
+# === Runtime pins that resolved in your working venv (lock the stack) ===
+# Discord/aiohttp stack
+aiohttp==3.12.15
+aiohappyeyeballs==2.6.1
+aiosignal==1.4.0
+attrs==25.3.0
+frozenlist==1.7.0
+multidict==6.6.4
+propcache==0.3.2
+yarl==1.20.1
+
+# faster-whisper deps
 tokenizers==0.19.1
 sentencepiece==0.2.0
 huggingface-hub==0.25.2
-numpy==2.3.2
+tqdm==4.67.1
+colorama==0.4.6
 
-# ---- Config ----
-python-dotenv==1.1.1
+# onnxruntime helpers
+coloredlogs==15.0.1
+humanfriendly==10.0
+flatbuffers==25.2.10
+protobuf==6.32.0
+sympy==1.14.0
+mpmath==1.3.0
+
+# misc/common
+cffi==1.17.1
+pycparser==2.22
+pyyaml==6.0.2
+filelock==3.19.1
+fsspec==2025.7.0
+packaging==25.0
+requests==2.32.4
+typing-extensions==4.14.1
+charset-normalizer==3.4.3
+urllib3==2.5.0
+certifi==2025.8.3
+idna==3.10
+pyreadline3==3.5.4
