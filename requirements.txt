@@ -1,5 +1,20 @@
+# requirements.txt
+# System dependency (not pip):
+#   - ImageMagick (CLI `magick`) → install with:
+#       winget install --id ImageMagick.ImageMagick -e --silent
+
+# ---- Discord bot (voice-enabled) ----
 discord.py[voice] @ git+https://github.com/Rapptz/discord.py@master
 discord-ext-voice-recv==0.5.2a179
+PyNaCl==1.5.0
+
+# ---- Transcription (Whisper via CTranslate2) ----
 faster-whisper==1.2.0
+ctranslate2==4.5.0
+tokenizers==0.19.1
+sentencepiece==0.2.0
+huggingface-hub==0.25.2
 numpy==2.3.2
+
+# ---- Config ----
 python-dotenv==1.1.1

@@ -462,3 +462,4 @@ def add_stats_command(tree: app_commands.CommandTree, asset_commands: AssetComma
         embed.set_footer(text="Use /art or /map to search for assets")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        
