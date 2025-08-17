@@ -1,0 +1,5 @@
+discord.py[voice] @ git+https://github.com/Rapptz/discord.py@master
+discord-ext-voice-recv==0.5.2a179
+faster-whisper==1.2.0
+numpy==2.3.2
+python-dotenv==1.1.1
