@@ -1,4 +1,32 @@
-.venv/
-.env
+@'
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.log
+
+# Virtual env
+.venv/
+venv/
+
+# Secrets
+.env
+
+# VS Code (keep only launch/tasks)
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Local data/caches
+asset_cache.json
+compression_cache.json
+
+# Big asset folders (do NOT push)
+art/
+dnd_maps/
+recaps/
+
+# Archives
+*.zip
+*.7z
+*.rar
+'@ | Set-Content -Encoding UTF8 .gitignore

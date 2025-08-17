@@ -7,6 +7,7 @@ import asyncio
 import logging
 import contextlib
 import threading
+import time
 from typing import Dict, Optional, Tuple, Deque, Any
 from collections import deque
 
@@ -15,6 +16,7 @@ import numpy as np
 import discord
 from discord import app_commands
 from discord.abc import Messageable
+from asset_commands import setup_asset_commands, add_stats_command, AssetCommands
 
 # --- NEW: load .env before reading env vars ---
 from dotenv import load_dotenv
@@ -305,6 +307,9 @@ SESSIONS: Dict[int, Session] = {}
 
 @client.event
 async def setup_hook() -> None:
+    start_time = time.time()
+
+    # Original transcription commands
     @tree.command(name="record", description="Start/continue recording this voice channel and post transcripts.")
     async def record_cmd(interaction: discord.Interaction) -> None:
         await _cmd_record(interaction)
@@ -313,8 +318,21 @@ async def setup_hook() -> None:
     async def stop_cmd(interaction: discord.Interaction) -> None:
         await _cmd_stop(interaction)
 
+    # NEW: Set up asset commands (don't wait for cache initialization)
+    logger.info("Setting up asset commands...")
+    asset_commands: AssetCommands = setup_asset_commands(client, tree)
+    add_stats_command(tree, asset_commands)  # Optional stats command
+    
+    # Debug: Print all registered commands
+    for cmd in tree.get_commands():
+        logger.info(f"Registered command: {cmd.name}")
+    
+    # Single sync call
     await tree.sync()
-    logger.info("Synced global commands.")
+    logger.info("Synced global commands (including asset search).")
+
+    total_time = time.time() - start_time
+    logger.info(f"Setup completed in {total_time:.2f} seconds")
 
 @client.event
 async def on_ready() -> None:
