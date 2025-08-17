@@ -418,4 +418,3 @@ async def _cmd_stop(interaction: discord.Interaction) -> None:
 # ------------ entry ------------
 if __name__ == "__main__":
     client.run(TOKEN)
-    
