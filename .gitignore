@@ -30,3 +30,6 @@ recaps/
 *.7z
 *.rar
 '@ | Set-Content -Encoding UTF8 .gitignore
+
+# Transcripts (local-only)
+transcripts/
