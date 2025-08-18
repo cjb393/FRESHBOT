@@ -1,21 +1,20 @@
-﻿# FreshBot — Maps + Voice
+﻿````markdown
+# FreshBot — Maps + Voice + Transcripts
 
 FreshBot is a Discord bot that:
 - Serves **D&D maps** and **art** via fuzzy search (`/map`, `/art`)
 - **Auto-compresses** local images to fit your server’s upload cap (default **10 MB**)
-- Optional: records and transcribes voice using **faster-whisper**
+- Records & transcribes voice with **faster-whisper**, and writes a clean **.txt transcript** per session (uploaded on `/stop`)
 
 ---
 
 ## Prerequisites
 
-- Windows
+- **Windows**
 - **Python 3.12** (installed system-wide)
-- **ImageMagick** CLI (`magick`) available on PATH
-- A Discord application/bot with these permissions:
-  - Send Messages
-  - Attach Files
-  - Use Application Commands
+- **ImageMagick** CLI (`magick`) on PATH
+- A Discord application/bot with permissions:
+  - Send Messages, Attach Files, Use Application Commands
   - (Optional for voice) Connect, Speak
 
 Install ImageMagick (one time):
@@ -24,7 +23,7 @@ Install ImageMagick (one time):
 winget install --id ImageMagick.ImageMagick -e --silent
 ````
 
-Open a **new** terminal after installing so `magick` is on PATH.
+> Open a **new terminal** after installing so `magick` is on PATH.
 
 ---
 
@@ -42,7 +41,8 @@ Create `.env` (no inline `#` on value lines):
 
 ```
 DISCORD_TOKEN=YOUR_BOT_TOKEN
-WHISPER_MODEL_SIZE=small
+WHISPER_MODEL=small
+LANGUAGE=en
 ```
 
 Place assets (not tracked by git):
@@ -54,21 +54,17 @@ C:\FRESHBOT\dnd_maps
 
 ---
 
-## VS Code configuration (stops Pylance “missing import” noise)
+## VS Code (silence Pylance import noise)
 
-1. Ctrl+Shift+P → **Python: Select Interpreter** → choose
-   `C:\FRESHBOT\.venv\Scripts\python.exe`
-2. Optional workspace pin: create `.vscode/settings.json` with:
+1. **Ctrl+Shift+P → Python: Select Interpreter** → `C:\FRESHBOT\.venv\Scripts\python.exe`
+2. Optional `.vscode/settings.json`:
 
 ```json
 {
   "python.defaultInterpreterPath": "C:\\FRESHBOT\\.venv\\Scripts\\python.exe",
-  "python.terminal.activateEnvironment": true,
-  "python.analysis.extraPaths": ["C:\\FRESHBOT\\.venv\\Lib\\site-packages"]
+  "python.terminal.activateEnvironment": true
 }
 ```
-
-3. Ctrl+Shift+P → **Developer: Reload Window**
 
 ---
 
@@ -76,15 +72,15 @@ C:\FRESHBOT\dnd_maps
 
 ### F5 in VS Code (recommended)
 
-This repo includes `.vscode/tasks.json` and `.vscode/launch.json`.
+Repo includes `.vscode/tasks.json` + `.vscode/launch.json`.
 
-* F5 runs `compress.ps1` first, then launches `app.py`
-* Stop with Shift+F5 or Ctrl+C in the terminal
+* **F5** runs `compress.ps1` first, then launches `app.py`
+* Stop with **Shift+F5** or **Ctrl+C** in the terminal
 
 ### Manual
 
 ```powershell
-# Optional pre-compression (fast, skips unchanged)
+# Optional pre-compression (fast; skips unchanged)
 powershell -NoProfile -ExecutionPolicy Bypass -File .\compress.ps1
 
 # Start the bot
@@ -95,13 +91,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\compress.ps1
 
 ## Slash Commands
 
-* `/map <query>` — search and upload from `dnd_maps/`
-* `/art <query>` — search and upload from `art/`
-* `/assets` — show counts
+* `/map <query>` — search & upload from `dnd_maps/`
+* `/art <query>` — search & upload from `art/` (PDFs supported as attachments)
+* `/assets` — show cached counts
 * `/refresh_cache` — rebuild asset index
-* Optional voice: `/record`, `/stop`
+* `/record` — start/continue recording the voice channel and post transcripts
+* `/stop` — stop, leave voice, **upload session transcript .txt**
+* `/transcript` — upload the current or most recent transcript file
 
-Tip: If you add/remove files while running, use `/refresh_cache`.
+> If you add/remove files while running, use **/refresh\_cache**.
 
 ---
 
@@ -121,12 +119,36 @@ $uploadLimitMB  = 10.0   # compress anything larger than this
 $targetMB       = 9.5    # final size target
 ```
 
-Examples:
-
-* Nitro/Boost 50 MB → set `50.0 / 48.0`
-* Boost 100 MB → set `100.0 / 95.0`
-
+Examples: 50 MB cap → `50.0 / 48.0`; 100 MB cap → `100.0 / 95.0`.
 If you change limits and want to reprocess old files, delete `compression_cache.json` once.
+
+**Note on PDFs:** PDFs are discoverable and uploadable via `/art`, but the compressor does **not** shrink PDFs.
+
+---
+
+## Transcripts
+
+* One UTF-8 `.txt` per session is written to **`transcripts/`**:
+
+  * Filename includes date, guild, channel, and UTC start time.
+  * Every line posted to Discord is appended with `[HH:MM:SS] Speaker: text`.
+* On `/stop`, the `.txt` is **uploaded** to the text channel and left on disk.
+* `/transcript` can upload the current/most recent log on demand.
+* Audio is **not** saved—only the text.
+
+**Git ignore:** keep transcripts out of the repo. In `.gitignore`:
+
+```
+transcripts/
+```
+
+If you accidentally tracked any:
+
+```powershell
+git rm -r --cached transcripts
+git commit -m "chore: ignore transcripts directory"
+git push
+```
 
 ---
 
@@ -149,9 +171,9 @@ PY
 
 ## Troubleshooting
 
-* `magick` not found → open a **new** terminal after install
-* Pylance “missing imports” → select interpreter `C:\FRESHBOT\.venv\Scripts\python.exe` and reload window
-* Voice errors about Opus → `PyNaCl` is installed; if you still see Opus errors at runtime, install an Opus DLL and ensure it’s on PATH
+* `magick` not found → open a **new terminal** after installing ImageMagick.
+* Pylance “missing imports” → select the `.venv` interpreter and reload window.
+* Opus/voice issues → `discord.py[voice]` installs `PyNaCl`; ensure any OS Opus DLL is on PATH if required.
 * Bot still “online” after stop → kill stray processes:
 
 ```powershell
@@ -162,13 +184,13 @@ taskkill /F /IM python.exe
 
 ## Git Hygiene
 
-Ignored by `.gitignore`: `art/`, `dnd_maps/`, `recaps/`, `.env`, `.venv/`, `asset_cache.json`, `compression_cache.json`, logs.
+Ignored by `.gitignore`: `art/`, `dnd_maps/`, `recaps/`, `transcripts/`, `.env`, `.venv/`, `asset_cache.json`, `compression_cache.json`, logs.
 
 Typical workflow:
 
 ```powershell
 git add -A
-git commit -m "Stable: asset search + auto-compress + F5 start"
+git commit -m "Stable: maps/art, auto-compress, transcripts"
 git push
 ```
 
@@ -185,6 +207,7 @@ C:\FRESHBOT
 ├─ .env                      # not committed
 ├─ compression_cache.json    # generated
 ├─ asset_cache.json          # generated
+├─ transcripts/              # generated, ignored by git
 ├─ art/                      # your images (not committed)
 ├─ dnd_maps/                 # your maps   (not committed)
 └─ .vscode/
@@ -193,4 +216,5 @@ C:\FRESHBOT
 ```
 
 ```
+::contentReference[oaicite:0]{index=0}
 ```
