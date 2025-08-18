@@ -1,12 +1,19 @@
 # asset_commands.py
 """
 Campaign Asset Search Module for FreshBot
-Provides fuzzy search commands for art and D&D maps with file caching
+Provides fuzzy search commands for art and D&D maps with file caching.
+- Supports PNG/JPG/WEBP/BMP/GIF/SVG/PDF discovery
+- Auto-rasterizes SVG to PNG before upload (Discord doesn't preview SVG)
+- 10 MB upload cap to avoid 413 errors on free servers
 """
 
 import asyncio
 import json
 import hashlib
+import subprocess
+import tempfile
+import shutil
+import contextlib
 from typing import List, Tuple, Optional, Dict
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -14,6 +21,34 @@ from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
+
+
+# ---------- utilities ----------
+
+def _rasterize_svg(svg_path: Path) -> Optional[Path]:
+    """
+    Convert an SVG to a temporary PNG with alpha preserved.
+    Requires ImageMagick `magick` on PATH.
+    Returns output PNG Path or None on failure.
+    """
+    if shutil.which("magick") is None:
+        return None
+
+    out = Path(tempfile.gettempdir()) / f"{svg_path.stem}.png"
+    # Only downscale if huge; keep transparency; decent density for crisp icons
+    cmd = [
+        "magick",
+        str(svg_path),
+        "-background", "none",
+        "-density", "300",
+        "-resize", "2048x2048>",
+        str(out),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return out if out.exists() else None
+    except Exception:
+        return None
 
 
 class AssetCache:
@@ -133,16 +168,25 @@ class AssetView(discord.ui.View):
             await interaction.response.defer()
 
             index = int(self.asset_select.values[0])
-            name, path = self.assets[index]
+            name, orig_path = self.assets[index]
 
-            if not path.exists():
+            if not orig_path.exists():
                 await interaction.edit_original_response(
                     content=f"❌ File not found: **{name}**", view=None
                 )
                 return
 
-            # Discord free limit ~10 MB; keep headroom
-            file_size = path.stat().st_size
+            # Optionally rasterize SVG
+            send_path = orig_path
+            cleanup: Optional[Path] = None
+            if orig_path.suffix.lower() == ".svg":
+                png = _rasterize_svg(orig_path)
+                if png and png.exists():
+                    send_path = png
+                    cleanup = png
+
+            # Discord free limit ~10 MB
+            file_size = send_path.stat().st_size
             max_size = 10 * 1024 * 1024
 
             if file_size > max_size:
@@ -155,10 +199,15 @@ class AssetView(discord.ui.View):
                     ),
                     view=None,
                 )
+                # clean up temp if created
+                if cleanup:
+                    with contextlib.suppress(Exception):
+                        cleanup.unlink()
                 return
 
             try:
-                discord_file = discord.File(path, filename=path.name)
+                fname = send_path.name if send_path.suffix.lower() != ".svg" else f"{send_path.stem}.png"
+                discord_file = discord.File(send_path, filename=fname)
                 await interaction.edit_original_response(
                     content=f"🎨 **{name}**", attachments=[discord_file], view=None
                 )
@@ -177,6 +226,10 @@ class AssetView(discord.ui.View):
                     await interaction.edit_original_response(
                         content=f"❌ Upload failed: {str(e)}", view=None
                     )
+            finally:
+                if cleanup:
+                    with contextlib.suppress(Exception):
+                        cleanup.unlink()
 
         except Exception as e:
             try:
@@ -345,12 +398,21 @@ class AssetCommands:
                 return
 
             if len(matches) == 1:
-                name, path = matches[0]
-                if not path.exists():
+                name, orig_path = matches[0]
+                if not orig_path.exists():
                     await interaction.followup.send(f"❌ File not found: **{name}**")
                     return
 
-                file_size = path.stat().st_size
+                # Optionally rasterize SVG
+                send_path = orig_path
+                cleanup: Optional[Path] = None
+                if orig_path.suffix.lower() == ".svg":
+                    png = _rasterize_svg(orig_path)
+                    if png and png.exists():
+                        send_path = png
+                        cleanup = png
+
+                file_size = send_path.stat().st_size
                 max_size = 10 * 1024 * 1024  # 10 MB
 
                 if file_size > max_size:
@@ -359,10 +421,14 @@ class AssetCommands:
                         f"❌ **{name}** is too large to upload\n"
                         f"📁 File size: {size_mb:.1f}MB (limit: 10MB)"
                     )
+                    if cleanup:
+                        with contextlib.suppress(Exception):
+                            cleanup.unlink()
                     return
 
                 try:
-                    discord_file = discord.File(path, filename=path.name)
+                    fname = send_path.name if send_path.suffix.lower() != ".svg" else f"{send_path.stem}.png"
+                    discord_file = discord.File(send_path, filename=fname)
                     await interaction.followup.send(f"🎨 **{name}**", file=discord_file)
                 except discord.HTTPException as e:
                     if "413" in str(e) or "too large" in str(e).lower():
@@ -374,6 +440,10 @@ class AssetCommands:
                         )
                     else:
                         await interaction.followup.send(f"❌ Upload failed: {str(e)}")
+                finally:
+                    if cleanup:
+                        with contextlib.suppress(Exception):
+                            cleanup.unlink()
             else:
                 view = AssetView(matches, query, asset_type)
                 await interaction.followup.send(
