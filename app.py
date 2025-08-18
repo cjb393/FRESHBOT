@@ -44,13 +44,15 @@ if not TOKEN:
     sys.exit(1)
 
 LANG = os.getenv("LANGUAGE", "en").strip() or "en"
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "small").strip() or "small"
+
+# Default Whisper model set to medium. Override with WHISPER_MODEL in .env if desired.
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "medium").strip() or "medium"
 
 # audio pipeline
-SR_IN = 48000            # Discord PCM (decoded)
+SR_IN = 48000            # Discord PCM decoded
 SR_OUT = 16000           # whisper preferred
 CHUNK_SECONDS = 5        # transcribe every ~N seconds per speaker
-MIN_SECONDS_TO_POST = 2  # don't post < 2s audio
+MIN_SECONDS_TO_POST = 2  # do not post < 2s audio
 
 # ------------ discord client ------------
 intents = discord.Intents.none()
@@ -64,8 +66,8 @@ tree = app_commands.CommandTree(client)
 logger.info("Loading Whisper model: %s", WHISPER_MODEL_SIZE)
 _model = WhisperModel(
     WHISPER_MODEL_SIZE,
-    device="auto",
-    compute_type="auto",  # will fall back to float32 if needed
+    device=os.getenv("WHISPER_DEVICE", "auto"),
+    compute_type=os.getenv("WHISPER_COMPUTE", "auto"),
 )
 logger.info("Loaded Whisper model: %s", WHISPER_MODEL_SIZE)
 
@@ -76,7 +78,7 @@ class TranscriptLogger:
     Simple per-guild transcript writer.
     - start_session(guild, channel) -> creates transcripts/<date>_<guild>_<channel>_<time>.txt
     - append_line(guild_id, text, speaker=None, ts=None)
-    - stop_session(guild_id) -> returns Path to the log (or None)
+    - stop_session(guild_id) -> returns Path to the log or None
     """
     def __init__(self, root: str = "transcripts"):
         self.root = Path(root)
@@ -129,6 +131,9 @@ class TranscriptLogger:
 
 transcripts = TranscriptLogger()
 
+# --- transcript line regex (kept for potential future tools, unused otherwise) ---
+_TS_LINE = re.compile(r"^\[(\d{2}):(\d{2}):(\d{2})\]\s*(?:(.*?):\s*)?(.*)$")
+
 # ------------ helpers ------------
 
 def _choose_post_channel(interaction: discord.Interaction) -> Optional[Messageable]:
@@ -159,7 +164,7 @@ def _choose_post_channel(interaction: discord.Interaction) -> Optional[Messageab
 
 
 def _display_name(entity: Any) -> str:
-    """Human-friendly display name for members/users/fallbacks."""
+    """Human-friendly display name for members or users."""
     if hasattr(entity, "display_name") and isinstance(getattr(entity, "display_name"), str):
         return getattr(entity, "display_name")
     if hasattr(entity, "name") and isinstance(getattr(entity, "name"), str):
@@ -172,15 +177,12 @@ def _downmix_stereo_to_mono_int16(stereo: np.ndarray) -> np.ndarray:
     if stereo.ndim == 1:
         return stereo
     if stereo.shape[-1] == 2:
-        # average with int32 to avoid overflow
         return ((stereo.astype(np.int32).sum(axis=1) // 2)).astype(np.int16)
-    # unknown channel count: just take first
     return stereo[..., 0].astype(np.int16)
 
 
 def _resample_48k_to_16k_mono_int16(mono_48k: np.ndarray) -> np.ndarray:
-    """Very simple decimation by 3. Assumes mono int16 @ 48k."""
-    # Take every 3rd sample (naive but works fine for speech)
+    """Naive decimation by 3. Assumes mono int16 at 48k."""
     return mono_48k[::3].copy()
 
 
@@ -189,10 +191,10 @@ def _pcm_bytes_to_int16_array(pcm: bytes) -> np.ndarray:
     return np.frombuffer(pcm, dtype=np.int16)
 
 
-# ------------ Transcribe sink (runs on decoder thread) ------------
+# ------------ Transcribe sink ------------
 
 class TranscribeSink(voice_recv.AudioSink):  # type: ignore
-    """Collects PCM per speaker; an asyncio worker handles transcribe + posting + logging."""
+    """Collect PCM per speaker. Async worker handles transcribe, posting, logging."""
 
     def __init__(
         self,
@@ -211,24 +213,18 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
         self.sr_in = sr_in
         self.sr_out = sr_out
 
-        # thread-safe buffers keyed by user_id (or ssrc fallback)
         self._lock = threading.Lock()
         self._buffers: Dict[str, Deque[np.ndarray]] = {}
         self._names: Dict[str, str] = {}
 
-        # control
         self._running = threading.Event()
         self._running.set()
-        self._worker_task: Optional[Any] = None  # run_coroutine_threadsafe returns a Future, keep as Any
-
-    # ---- AudioSink API (required by discord-ext-voice-recv) ----
+        self._worker_task: Optional[Any] = None
 
     def wants_opus(self) -> bool:
-        # Return False to receive decoded PCM (int16 48k)
-        return False
+        return False  # we want decoded PCM
 
     def write(self, source: Any, data: Any) -> None:
-        """Called from router thread for every RTP payload (per speaker)."""
         try:
             pcm: Optional[bytes] = getattr(data, "pcm", None)
             if not pcm:
@@ -236,19 +232,15 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
 
             arr = _pcm_bytes_to_int16_array(pcm)
 
-            # If stereo int16, downmix to mono
             if arr.ndim == 1:
-                # Try to infer channels: Discord typically delivers 2ch interleaved
                 if len(arr) % 2 == 0:
                     arr = arr.reshape(-1, 2)
                     arr = _downmix_stereo_to_mono_int16(arr)
             else:
                 arr = _downmix_stereo_to_mono_int16(arr)
 
-            # Downsample 48k -> 16k (naive decimation)
             arr16 = _resample_48k_to_16k_mono_int16(arr)
 
-            # identify speaker key + display name (best-effort)
             key = None
             name = "unknown"
             if source is not None:
@@ -266,13 +258,10 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
             logger.exception("TranscribeSink.write error: %s", e)
 
     def cleanup(self) -> None:
-        """Called by library when listening stops."""
         try:
             self._running.clear()
         except Exception:
             pass
-
-    # ---- lifecycle from our side ----
 
     def start_worker(self) -> None:
         if self._worker_task is None:
@@ -283,13 +272,11 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
         self._worker_task = None
 
     async def _worker(self) -> None:
-        """Async task on event loop: periodically drains speaker buffers, transcribes, posts, logs."""
         CHUNK = CHUNK_SECONDS * SR_OUT
         MIN_POST = max(int(MIN_SECONDS_TO_POST * SR_OUT), 1)
 
         while self._running.is_set():
             await asyncio.sleep(1.0)
-            # snapshot buffers thread-safely
             with self._lock:
                 keys = list(self._buffers.keys())
 
@@ -299,11 +286,9 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
                     name = self._names.get(key, "unknown")
                     if not dq:
                         continue
-                    # collect enough samples for one chunk
                     total = sum(len(x) for x in dq)
                     if total < CHUNK:
                         continue
-                    # pop to produce ~CHUNK samples
                     samples: List[np.ndarray] = []
                     have = 0
                     while dq and have < CHUNK:
@@ -318,10 +303,8 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
                 if len(mono16) < MIN_POST:
                     continue
 
-                # convert to float32 in [-1, 1]
                 audio_f32 = (mono16.astype(np.float32) / 32768.0)
 
-                # transcribe in thread pool
                 try:
                     loop = asyncio.get_running_loop()
                     text = await loop.run_in_executor(None, _do_transcribe, self.model, audio_f32, LANG)
@@ -333,20 +316,17 @@ class TranscribeSink(voice_recv.AudioSink):  # type: ignore
                 if not text:
                     continue
 
-                # post result
                 try:
                     await self.post_channel.send(f"**{name}:** {text}")
                 except Exception as e:
                     logger.exception("Failed to post transcript: %s", e)
 
-                # log to transcript file
                 try:
                     transcripts.append_line(self.guild_id, text=text, speaker=name, ts=time.time())
                 except Exception:
                     logger.exception("Failed to write transcript line")
 
 def _do_transcribe(model: WhisperModel, audio_f32: np.ndarray, lang: str) -> str:
-    """Blocking transcription; returns plain text from segments."""
     segments, info = model.transcribe(
         audio_f32,
         language=lang,
@@ -371,15 +351,13 @@ class Session:
 
 SESSIONS: Dict[int, Session] = {}
 
-
 # ------------ commands ------------
 
 @client.event
 async def setup_hook() -> None:
     start_time = time.time()
 
-    # transcription commands
-    @tree.command(name="record", description="Start/continue recording this voice channel and post transcripts.")
+    @tree.command(name="record", description="Start or continue recording this voice channel and post transcripts.")
     async def record_cmd(interaction: discord.Interaction) -> None:
         await _cmd_record(interaction)
 
@@ -387,14 +365,13 @@ async def setup_hook() -> None:
     async def stop_cmd(interaction: discord.Interaction) -> None:
         await _cmd_stop(interaction)
 
-    # assets
     logger.info("Setting up asset commands...")
     asset_commands: AssetCommands = setup_asset_commands(client, tree)
     add_stats_command(tree, asset_commands)
     for cmd in tree.get_commands():
         logger.info(f"Registered command: {cmd.name}")
     await tree.sync()
-    logger.info("Synced global commands (including asset search).")
+    logger.info("Synced global commands including asset search.")
 
     total_time = time.time() - start_time
     logger.info(f"Setup completed in {total_time:.2f} seconds")
@@ -412,13 +389,13 @@ async def _cmd_record(interaction: discord.Interaction) -> None:
     state = getattr(interaction.user, "voice", None)
     channel = getattr(state, "channel", None)
     if channel is None or not isinstance(channel, discord.VoiceChannel):
-        await interaction.response.send_message("You’re not in a voice channel.", ephemeral=True)
+        await interaction.response.send_message("You are not in a voice channel.", ephemeral=True)
         return
 
     post_channel = _choose_post_channel(interaction)
     if post_channel is None:
         await interaction.response.send_message(
-            "I can't find a text channel I can post to.", ephemeral=True
+            "I cannot find a text channel I can post to.", ephemeral=True
         )
         return
 
@@ -434,17 +411,14 @@ async def _cmd_record(interaction: discord.Interaction) -> None:
 
     existing = SESSIONS.get(g.id)
     if existing:
-        try:
+        with contextlib.suppress(Exception):
             existing.sink.start_worker()
-        except Exception:
-            pass
         await interaction.followup.send(
-            f"Recording in **{channel.name}** and posting to {getattr(post_channel, 'mention', '#text-channel')}.",
+            f"Recording in {channel.name} and posting to {getattr(post_channel, 'mention', '#text-channel')}.",
             ephemeral=True,
         )
         return
 
-    # NEW: start transcript file for this guild/channel
     with contextlib.suppress(Exception):
         transcripts.start_session(g, post_channel if isinstance(post_channel, discord.abc.GuildChannel) else None)
 
@@ -459,7 +433,7 @@ async def _cmd_record(interaction: discord.Interaction) -> None:
     SESSIONS[g.id] = Session(vc=vc, sink=sink)
 
     await interaction.followup.send(
-        f"Recording in **{channel.name}** and posting to {getattr(post_channel, 'mention', '#text-channel')}.",
+        f"Recording in {channel.name} and posting to {getattr(post_channel, 'mention', '#text-channel')}.",
         ephemeral=True,
     )
 
@@ -478,12 +452,11 @@ async def _cmd_stop(interaction: discord.Interaction) -> None:
         with contextlib.suppress(Exception):
             await sess.vc.disconnect(force=False)
 
-        # NEW: finalize transcript and upload to a text channel
         path = transcripts.stop_session(g.id)
         ch = _choose_post_channel(interaction)
         if path and path.exists() and ch is not None:
             try:
-                await ch.send(content=f"📝 Session transcript: **{path.name}**", file=discord.File(path, filename=path.name))
+                await ch.send(content=f"Session transcript: **{path.name}**", file=discord.File(path, filename=path.name))
             except Exception:
                 logger.exception("Failed to upload transcript file")
 
@@ -495,12 +468,10 @@ async def _cmd_stop(interaction: discord.Interaction) -> None:
         with contextlib.suppress(Exception):
             await vc.disconnect(force=False)
 
-    # Also try to close any open transcript (if something got out of sync)
     with contextlib.suppress(Exception):
         transcripts.stop_session(g.id)
 
     await interaction.followup.send("Nothing to stop here.", ephemeral=True)
-
 
 # ------------ entry ------------
 if __name__ == "__main__":
