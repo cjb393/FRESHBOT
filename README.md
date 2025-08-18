@@ -13,9 +13,7 @@ FreshBot is a Discord bot that:
 - **Windows**
 - **Python 3.12** (installed system-wide)
 - **ImageMagick** CLI (`magick`) on PATH
-- A Discord application/bot with permissions:
-  - Send Messages, Attach Files, Use Application Commands
-  - (Optional for voice) Connect, Speak
+- A Discord application/bot
 
 Install ImageMagick (one time):
 
@@ -23,7 +21,48 @@ Install ImageMagick (one time):
 winget install --id ImageMagick.ImageMagick -e --silent
 ````
 
-> Open a **new terminal** after installing so `magick` is on PATH.
+Open a **new terminal** after installing so `magick` is on PATH.
+
+---
+
+## Install the Bot (Invite URL & Permissions)
+
+**Installation Contexts**
+
+* ✅ Guild Install
+* ⛔ User Install (unchecked)
+
+**Scopes (exactly):**
+
+* `applications.commands`
+* `bot`
+
+**Bot Permissions (check ONLY these):**
+
+* View Channels
+* Send Messages
+* Send Messages in Threads
+* Embed Links
+* Attach Files
+* Read Message History
+* Add Reactions
+* Manage Webhooks
+* Connect
+* Speak
+* Create Public Threads
+* Create Private Threads
+
+**Permissions integer:**
+
+```
+378497256512
+```
+
+**Invite URL template** (replace `YOUR_CLIENT_ID`):
+
+```
+https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=378497256512
+```
 
 ---
 
@@ -54,7 +93,7 @@ C:\FRESHBOT\dnd_maps
 
 ---
 
-## VS Code (silence Pylance import noise)
+## VS Code
 
 1. **Ctrl+Shift+P → Python: Select Interpreter** → `C:\FRESHBOT\.venv\Scripts\python.exe`
 2. Optional `.vscode/settings.json`:
@@ -75,7 +114,7 @@ C:\FRESHBOT\dnd_maps
 Repo includes `.vscode/tasks.json` + `.vscode/launch.json`.
 
 * **F5** runs `compress.ps1` first, then launches `app.py`
-* Stop with **Shift+F5** or **Ctrl+C** in the terminal
+* Stop with **Shift+F5** or **Ctrl+C**
 
 ### Manual
 
@@ -92,12 +131,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\compress.ps1
 ## Slash Commands
 
 * `/map <query>` — search & upload from `dnd_maps/`
-* `/art <query>` — search & upload from `art/` (PDFs supported as attachments)
+* `/art <query>` — search & upload from `art/` (PDFs upload as attachments)
 * `/assets` — show cached counts
 * `/refresh_cache` — rebuild asset index
 * `/record` — start/continue recording the voice channel and post transcripts
 * `/stop` — stop, leave voice, **upload session transcript .txt**
-* `/transcript` — upload the current or most recent transcript file
+* `/transcript` — upload current/most recent transcript
 
 > If you add/remove files while running, use **/refresh\_cache**.
 
@@ -108,7 +147,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\compress.ps1
 * Script: `compress.ps1`
 * Policy: compress any image **> 10 MB** to **\~9.5 MB**
 
-  * Uses WEBP if transparent, JPEG otherwise
+  * WEBP if transparent, JPEG otherwise
   * In-place overwrite (extension may change)
 * Cache: `compression_cache.json` tracks `path + lastWriteTime + size`
 
@@ -122,27 +161,24 @@ $targetMB       = 9.5    # final size target
 Examples: 50 MB cap → `50.0 / 48.0`; 100 MB cap → `100.0 / 95.0`.
 If you change limits and want to reprocess old files, delete `compression_cache.json` once.
 
-**Note on PDFs:** PDFs are discoverable and uploadable via `/art`, but the compressor does **not** shrink PDFs.
+**Note:** PDFs are discoverable and uploadable via `/art`, but the compressor does **not** shrink PDFs.
 
 ---
 
 ## Transcripts
 
-* One UTF-8 `.txt` per session is written to **`transcripts/`**:
+* Text-only `.txt` per session in **`transcripts/`** (filename embeds date, guild, channel, UTC start).
+* Every posted line is appended as: `[HH:MM:SS] Speaker: text`.
+* On `/stop`, the `.txt` is **uploaded** to the text channel and kept locally.
+* `/transcript` can upload the current/most recent file at any time.
 
-  * Filename includes date, guild, channel, and UTC start time.
-  * Every line posted to Discord is appended with `[HH:MM:SS] Speaker: text`.
-* On `/stop`, the `.txt` is **uploaded** to the text channel and left on disk.
-* `/transcript` can upload the current/most recent log on demand.
-* Audio is **not** saved—only the text.
-
-**Git ignore:** keep transcripts out of the repo. In `.gitignore`:
+**Keep transcripts out of Git**: add to `.gitignore`
 
 ```
 transcripts/
 ```
 
-If you accidentally tracked any:
+If any were tracked:
 
 ```powershell
 git rm -r --cached transcripts
@@ -171,14 +207,14 @@ PY
 
 ## Troubleshooting
 
-* `magick` not found → open a **new terminal** after installing ImageMagick.
-* Pylance “missing imports” → select the `.venv` interpreter and reload window.
-* Opus/voice issues → `discord.py[voice]` installs `PyNaCl`; ensure any OS Opus DLL is on PATH if required.
-* Bot still “online” after stop → kill stray processes:
+* `magick` not found → open a **new terminal** after install.
+* Pylance warnings → select the `.venv` interpreter and reload window.
+* Opus/voice issues → `discord.py[voice]` installs `PyNaCl`; ensure any Opus DLL is on PATH if required.
+* Bot looks “online” after stop → kill stray processes:
 
-```powershell
-taskkill /F /IM python.exe
-```
+  ```powershell
+  taskkill /F /IM python.exe
+  ```
 
 ---
 
