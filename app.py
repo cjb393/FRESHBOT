@@ -45,8 +45,8 @@ if not TOKEN:
 
 LANG = os.getenv("LANGUAGE", "en").strip() or "en"
 
-# Default Whisper model set to medium. Override with WHISPER_MODEL in .env if desired.
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "medium").strip() or "medium"
+# Default Whisper model set to small. Override with WHISPER_MODEL in .env if desired.
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "small").strip() or "small"
 
 # audio pipeline
 SR_IN = 48000            # Discord PCM decoded
@@ -351,6 +351,14 @@ class Session:
 
 SESSIONS: Dict[int, Session] = {}
 
+def _has_active_transcript(guild_id: Optional[int]) -> bool:
+    if guild_id is None:
+        return False
+    return guild_id in transcripts._open_files
+
+def _utc_now_str() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
 # ------------ commands ------------
 
 @client.event
@@ -364,6 +372,78 @@ async def setup_hook() -> None:
     @tree.command(name="stop", description="Stop recording in this server.")
     async def stop_cmd(interaction: discord.Interaction) -> None:
         await _cmd_stop(interaction)
+
+    # ---- Transcript helpers: /scene, /note, /mark ----
+    @tree.command(name="scene", description="Insert a scene break into the transcript and post a divider.")
+    @app_commands.describe(title="Short scene title, e.g., 'Into the Woods'")
+    async def scene_cmd(interaction: discord.Interaction, title: str) -> None:
+        post_ch = _choose_post_channel(interaction)
+        if post_ch is None:
+            await interaction.response.send_message("No text channel available to post.", ephemeral=True)
+            return
+
+        author = _display_name(interaction.user)
+        now_utc = _utc_now_str()
+        divider = (
+            f"=====================\n"
+            f"Scene: {title}  [by {author} at {now_utc} UTC]\n"
+            f"====================="
+        )
+
+        await interaction.response.send_message(divider)
+
+        g = interaction.guild
+        gid: Optional[int] = g.id if isinstance(g, discord.Guild) else None
+        if gid is not None and _has_active_transcript(gid):
+            transcripts.append_line(gid, text=divider)
+        else:
+            with contextlib.suppress(Exception):
+                await post_ch.send("_Note: no active transcript session is open. Use `/record` to start one._")
+
+    @tree.command(name="note", description="Insert a bracketed note into the transcript and chat.")
+    @app_commands.describe(text="The note text to record, e.g., 'Torches flicker in the breeze.'")
+    async def note_cmd(interaction: discord.Interaction, text: str) -> None:
+        post_ch = _choose_post_channel(interaction)
+        if post_ch is None:
+            await interaction.response.send_message("No text channel available to post.", ephemeral=True)
+            return
+
+        author = _display_name(interaction.user)
+        now_utc = _utc_now_str()
+        note_line = f"[NOTE] {text}  [by {author} at {now_utc} UTC]"
+
+        await interaction.response.send_message(note_line)
+
+        g = interaction.guild
+        gid: Optional[int] = g.id if isinstance(g, discord.Guild) else None
+        if gid is not None and _has_active_transcript(gid):
+            transcripts.append_line(gid, text=note_line)
+        else:
+            with contextlib.suppress(Exception):
+                await post_ch.send("_Note: no active transcript session is open. Use `/record` to start one._")
+
+    @tree.command(name="mark", description="Mark an important moment in the transcript.")
+    @app_commands.describe(label="Short label such as 'important', 'loot', 'npc', or 'cliffhanger'")
+    async def mark_cmd(interaction: discord.Interaction, label: Optional[str] = "important") -> None:
+        post_ch = _choose_post_channel(interaction)
+        if post_ch is None:
+            await interaction.response.send_message("No text channel available to post.", ephemeral=True)
+            return
+
+        author = _display_name(interaction.user)
+        now_utc = _utc_now_str()
+        label = (label or "important").strip()
+        mark_line = f"[MARK] ⭐ {label}  [by {author} at {now_utc} UTC]"
+
+        await interaction.response.send_message(mark_line)
+
+        g = interaction.guild
+        gid: Optional[int] = g.id if isinstance(g, discord.Guild) else None
+        if gid is not None and _has_active_transcript(gid):
+            transcripts.append_line(gid, text=mark_line)
+        else:
+            with contextlib.suppress(Exception):
+                await post_ch.send("_Note: no active transcript session is open. Use `/record` to start one._")
 
     logger.info("Setting up asset commands...")
     asset_commands: AssetCommands = setup_asset_commands(client, tree)
